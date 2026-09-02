@@ -95,13 +95,16 @@ def wf_notify(event, extra=""):
 
     if ntfy_topic:
         try:
+            # Use plain ASCII for headers to avoid latin-1 encoding errors
+            ascii_title = title.encode("ascii", "replace").decode()
+            ascii_tag = tag.encode("ascii", "replace").decode()
             req = urllib.request.Request(
                 f"https://ntfy.sh/{ntfy_topic}",
-                data=message.encode(),
+                data=message.encode("utf-8"),
                 method="POST"
             )
-            req.add_header("Title", title)
-            req.add_header("Tags", tag)
+            req.add_header("Title", ascii_title)
+            req.add_header("Tags", ascii_tag)
             urllib.request.urlopen(req, timeout=10)
         except Exception as e:
             log(f"ntfy error: {e}")
