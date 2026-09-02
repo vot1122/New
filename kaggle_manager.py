@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-WZML-X Kaggle Session Manager (v4)
-===================================
+WZML-X Kaggle Session Manager (v5 — Blind Push Fallback)
+=========================================================
 Called by GitHub Actions workflow. Handles:
 
   1. HUMAN-LIKE SCHEDULE: 06:00–23:00 IST active, overnight rest
-  2. NO SIMULTANEOUS SESSIONS: Status check before start
+  2. BLIND PUSH: No status check (avoids 'Permission denied' on private notebooks)
   3. RANDOMIZED TIMING: 0–30 min delay within windows + jitter
   4. NOTIFICATIONS: Telegram + ntfy.sh on start/stop/skip/error
 
 USAGE:
-    python kaggle_manager.py start    # Start the Kaggle notebook
-    python kaggle_manager.py stop     # Stop the Kaggle notebook
-    python kaggle_manager.py status   # Check session status
-    python kaggle_manager.py ensure   # Start if in window, stop if outside
+    python kaggle_manager.py start    # Push the notebook (starts a new session)
+    python kaggle_manager.py stop      # Notify stop (notebook self-terminates)
+    python kaggle_manager.py status    # Try status (may fail, that's ok)
+    python kaggle_manager.py ensure   # Push if in active hours, skip if not
 
 REQUIRED ENVIRONMENT VARIABLES (GitHub Secrets):
     KAGGLE_USERNAME  - Kaggle username
@@ -85,17 +85,16 @@ def wf_notify(event, extra=""):
     tg_chat = os.environ.get("TG_CHAT_ID", "")
 
     labels = {
-        "start": ("🟢 Workflow: Starting Notebook", "green_circle"),
-        "stop": ("🔴 Workflow: Stopping Notebook", "red_circle"),
-        "skip": ("⏭️ Workflow: Skipped", "fast_forward"),
-        "error": ("⚠️ Workflow: Error", "warning"),
+        "start": ("Workflow: Starting Notebook", "green_circle"),
+        "stop": ("Workflow: Stopping Notebook", "red_circle"),
+        "skip": ("Workflow: Skipped", "fast_forward"),
+        "error": ("Workflow: Error", "warning"),
     }
-    title, tag = labels.get(event, ("📋 Workflow", "memo"))
+    title, tag = labels.get(event, ("Workflow", "memo"))
     message = f"{title}\nTime: {now_str}\n{extra}" if extra else f"{title}\nTime: {now_str}"
 
     if ntfy_topic:
         try:
-            # Use plain ASCII for headers to avoid latin-1 encoding errors
             ascii_title = title.encode("ascii", "replace").decode()
             ascii_tag = tag.encode("ascii", "replace").decode()
             req = urllib.request.Request(
@@ -156,30 +155,52 @@ def kaggle_cmd(args):
     return result
 
 def get_kernel_status(slug):
-    result = kaggle_cmd(f"kernels status {slug}")
-    output = (result.stdout + result.stderr).lower()
-    if "running" in output:
-        return "running"
-    elif "complete" in output:
-        return "complete"
-    elif "cancelled" in output or "cancel" in output:
-        return "cancelled"
-    elif "error" in output:
-        return "error"
-    elif "pending" in output:
-        return "pending"
-    return "unknown"
+    """Best-effort status check. Returns 'unknown' on permission error."""
+    try:
+        result = kaggle_cmd(f"kernels status {slug}")
+        output = (result.stdout + result.stderr).lower()
+        if "running" in output:
+            return "running"
+        elif "complete" in output:
+            return "complete"
+        elif "cancelled" in output or "cancel" in output:
+            return "cancelled"
+        elif "error" in output:
+            return "error"
+        elif "pending" in output:
+            return "pending"
+        return "unknown"
+    except Exception:
+        return "unknown"
+
+def blind_push():
+    """Push the notebook without checking status first. This avoids
+    the 'Permission denied' error that occurs when the notebook's
+    status can't be read (private notebooks, API quirks, etc)."""
+    log("Blind push (skipping status check)...")
+    result = kaggle_cmd("kernels push -p .")
+    if result.returncode == 0:
+        log("Notebook pushed successfully. New session starting.")
+        wf_notify("start", "Notebook pushed. Bot coming online.")
+        return True
+    else:
+        log("Push failed. Retrying in 15s...")
+        time.sleep(15)
+        result = kaggle_cmd("kernels push -p .")
+        if result.returncode == 0:
+            log("Notebook pushed on retry. New session starting.")
+            wf_notify("start", "Notebook pushed on retry. Bot coming online.")
+            return True
+        else:
+            log("ERROR: Failed after retry.")
+            wf_notify("error", "Failed to push notebook after retry")
+            return False
 
 # ============================================================
 # ACTIONS
 # ============================================================
 def action_start():
     slug = get_notebook_slug()
-    status = get_kernel_status(slug)
-    if status == "running":
-        log(f"Already running. Skipping (no simultaneous sessions).")
-        wf_notify("skip", f"Already running: {slug}")
-        return
 
     if not in_active_hours():
         log(f"Outside active hours. Skipping. Time: {now_ist().strftime('%H:%M')} IST")
@@ -195,28 +216,10 @@ def action_start():
 
     log(f"Starting: {slug}")
     wf_notify("start", f"Notebook: {slug}")
-
-    result = kaggle_cmd("kernels push -p .")
-    if result.returncode == 0:
-        log("Notebook pushed. New session starting.")
-        wf_notify("start", "Notebook pushed. Bot coming online.")
-        time.sleep(30)
-        status = get_kernel_status(slug)
-        log(f"Post-start status: {status}")
-    else:
-        log("Push failed. Retrying...")
-        time.sleep(15)
-        result = kaggle_cmd("kernels push -p .")
-        if result.returncode != 0:
-            log("ERROR: Failed after retry.")
-            wf_notify("error", "Failed to push notebook")
+    blind_push()
 
 def action_stop():
     slug = get_notebook_slug()
-    status = get_kernel_status(slug)
-    if status != "running":
-        log(f"Not running (status: {status}). Nothing to stop.")
-        return
 
     if in_time_window(STOP_WINDOW_BEGIN, STOP_WINDOW_END):
         log("Evening stop window. Adding random delay...")
@@ -228,11 +231,8 @@ def action_stop():
 
     log(f"Stopping: {slug}")
     wf_notify("stop", f"Notebook: {slug}")
-    # Notebook self-terminates; this is backup
-    kaggle_cmd(f"kernels pull {slug} -p /tmp/kaggle_pull")
-    time.sleep(15)
-    status = get_kernel_status(slug)
-    log(f"Post-stop status: {status}")
+    # Notebook self-terminates at ~9.5h; this is backup notification only
+    log("Notebook will self-terminate. Stop notification sent.")
 
 def action_status():
     slug = get_notebook_slug()
@@ -241,20 +241,22 @@ def action_status():
     log(f"Status:   {status}")
     log(f"Time:     {now_ist().strftime('%H:%M:%S IST')}")
     log(f"Active:   {'YES' if in_active_hours() else 'NO'}")
+    if status == "unknown":
+        log("Note: Status check may fail if notebook is private or API is restricted.")
 
 def action_ensure():
-    slug = get_notebook_slug()
-    status = get_kernel_status(slug)
     active = in_active_hours()
-    log(f"Status: {status} | Active: {active} | {now_ist().strftime('%H:%M')} IST")
-    if active and status != "running":
-        log("Should be running but isn't. Starting...")
+    log(f"Active: {active} | {now_ist().strftime('%H:%M')} IST")
+    if active:
+        log("In active hours. Pushing notebook (blind, no status check)...")
         action_start()
-    elif not active and status == "running":
-        log("Running outside active hours. Stopping...")
-        action_stop()
     else:
-        log("State correct. No action needed.")
+        log("Outside active hours. Skipping.")
+        # Try a status check for logging purposes, but don't block on it
+        slug = get_notebook_slug()
+        status = get_kernel_status(slug)
+        if status == "running":
+            log("Notebook still running outside active hours. It will self-terminate.")
 
 def main():
     if len(sys.argv) < 2:
