@@ -1,11 +1,12 @@
 # ============================================================
-# GitHub Actions Workflow — WZML-X Kaggle Schedule (v5)
+# GitHub Actions Workflow - WZML-X Kaggle Schedule (v5)
 # ============================================================
+#
 # SCHEDULE (IST, GitHub runs in UTC):
-# 06:00 IST → Morning start (randomized 06:00–06:30 by manager)
-# 07:00 IST → Health check (ensure bot is running)
-# 15:00 IST → Midday health (ensure bot is running)
-, 22:30 IST → Evening stop (randomized 22:30–23:00 by manager)
+# 06:00 IST = Morning start (randomized 06:00-06:30 by manager)
+# 07:00 IST = Health check (ensure bot is running)
+# 15:00 IST = Midday health (ensure bot is running)
+# 22:30 IST = Evening stop (randomized 22:30-23:00 by manager)
 #
 # UTC conversions (IST = UTC + 5:30):
 # 06:00 IST = 00:30 UTC
@@ -18,7 +19,8 @@
 # KAGGLE_KEY - Kaggle API key
 # KAGGLE_NOTEBOOK - Notebook slug (username/notebook-title)
 #
-# OPTIONAL (for workflow notifications):	# NTFY_TOPIC - ntfy.sh topic
+# OPTIONAL (for workflow notifications):
+# NTFY_TOPIC - ntfy.sh topic
 # TG_BOT_TOKEN - Bot token
 # TG_CHAT_ID - Your Telegram user ID
 #
@@ -29,10 +31,10 @@ name: WZML-X Schedule
 
 on:
   schedule:
-    - cron: "30 0 * * *"  # 06:00 IST — morning start
-    - cron: "30 1 * * *"  # 07:00 IST — morning health check
-    - cron: "30 9 * * *"  # 15:00 IST — midday health check
-    - cron: "0 17 * * *"  # 22:30 IST — evening stop
+    - cron: "30 0 * * *"  # 06:00 IST - morning start
+    - cron: "30 1 * * *"  # 07:00 IST - morning health check
+    - cron: "30 9 * * *"  # 15:00 IST - midday health check
+    - cron: "0 17 * * *"  # 22:30 IST - evening stop
   workflow_dispatch:
 
 permissions:
@@ -64,17 +66,13 @@ jobs:
         UTC_MIN=$(date -u +"%M")
         echo "UTC time: ${UTC_HOUR}:${UTC_MIN}"
 
-        if [[ "$UTC_HOUR" -eq 0 && "$UTC_MIN" -ge 25 ]] || \
-           [[ "$UTC_HOUR" -eq 1 && "$UTC_MIN" -le 5 ]]; then
+        if [[ "$UTC_HOUR" -eq 0 && "$UTC_MIN" -ge 25 ]] ||            [[ "$UTC_HOUR" -eq 1 && "$UTC_MIN" -le 5 ]]; then
           echo "action=start" >> $GITHUB_OUTPUT
-        elif [[ "$UTC_HOUR" -eq 1 && "$UTC_MIN" -ge 25 ]] || \
-           [[ "$UTC_HOUR" -eq 2 && "$UTC_MIN" -le 5 ]]; then
+        elif [[ "$UTC_HOUR" -eq 1 && "$UTC_MIN" -ge 25 ]] ||            [[ "$UTC_HOUR" -eq 2 && "$UTC_MIN" -le 5 ]]; then
           echo "action=ensure" >> $GITHUB_OUTPUT
-        elif [[ "$UTC_HOUR" -eq 9 && "$UTC_MIN" -ge 25 ]] || \
-           [[ "$UTC_HOUR" -eq 10 && "$UTC_MIN" -le 5 ]]; then
+        elif [[ "$UTC_HOUR" -eq 9 && "$UTC_MIN" -ge 25 ]] ||            [[ "$UTC_HOUR" -eq 10 && "$UTC_MIN" -le 5 ]]; then
           echo "action=ensure" >> $GITHUB_OUTPUT
-        elif [[ "$UTC_HOUR" -eq 16 && "$UTC_MIN" -ge 55 ]] || \
-           [[ "$UTC_HOUR" -eq 17 && "$UTC_MIN" -le 30 ]]; then
+        elif [[ "$UTC_HOUR" -eq 16 && "$UTC_MIN" -ge 55 ]] ||            [[ "$UTC_HOUR" -eq 17 && "$UTC_MIN" -le 30 ]]; then
           echo "action=stop" >> $GITHUB_OUTPUT
         else
           echo "action=ensure" >> $GITHUB_OUTPUT
